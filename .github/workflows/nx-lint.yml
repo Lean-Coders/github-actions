@@ -16,11 +16,7 @@ jobs:
           cache: "npm"
       - uses: nrwl/nx-set-shas@v2
       - run: npm ci
-      - run: npx nx affected --target=test --parallel=3 --ci --code-coverage
-      - run: npx nx affected --target=build --parallel=3 --configuration=production
-      - name: Archive build artifacts
-        uses: actions/upload-artifact@v3
-        with:
-          name: dist
-          path: |
-            dist
+
+      - run: npx nx workspace-lint
+      - run: npx nx format:check
+      - run: npx nx affected --target=lint --parallel=3
