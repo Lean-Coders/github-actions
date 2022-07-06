@@ -1,0 +1,94 @@
+name: CI
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 16
+          cache: "npm"
+      - run: npm ci
+  lint:
+    runs-on: ubuntu-latest
+    needs: install
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 16
+          cache: "npm"
+      - uses: nrwl/nx-set-shas@v2
+      - run: npm ci
+
+      - run: npx nx workspace-lint
+      - run: npx nx format:check
+      - run: npx nx affected --target=lint --parallel=3
+  build-test:
+    runs-on: ubuntu-latest
+    needs: install
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 16
+          cache: "npm"
+      - uses: nrwl/nx-set-shas@v2
+      - run: npm ci
+      - run: npx nx affected --target=test --parallel=3 --ci --code-coverage
+      - run: npx nx affected --target=build --parallel=3 --configuration=production
+      - name: Archive build artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: dist
+          path: |
+            dist
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [lint, build-test]
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - uses: nrwl/nx-set-shas@v2
+      - uses: azure/docker-login@v1
+        with:
+          login-server: ${{ secrets.ACR_URL }}
+          username: ${{ secrets.AZURE_LOGIN }}
+          password: ${{ secrets.AZURE_PASSWORD }}
+      - uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      - uses: azure/aks-set-context@v2
+        with:
+          resource-group: ${{ secrets.AZURE_RESOURCEGROUP }}
+          cluster-name: ${{ secrets.AZURE_CLUSTERNAME }}
+      - name: build docker base image
+        run: |
+          mkdir -p ./repo/docker-cache
+          XFILE=./repo/docker-cache/base.tar
+          if [ -f "$XFILE" ]; then
+              echo "$XFILE exists."
+              docker load < ./repo/docker-cache/base.tar
+          else
+            echo "$XFILE does not exist."
+            docker build --tag=builder .
+            docker save -o ./repo/docker-cache/base.tar builder
+          fi
+
+          chmod +x ./tools/docker/*.sh
+
+          mkdir -p k8s
+      - uses: actions/download-artifact@v3
+      - name: build & push docker images
+        run: |
+          npm ci
+          npx nx affected --target=docker
+          npx nx affected --target=deploy
